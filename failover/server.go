@@ -5,6 +5,7 @@ import (
 
 	"github.com/siddontang/go-mysql/client"
 	. "github.com/siddontang/go-mysql/mysql"
+	"github.com/siddontang/go-mysql/packet"
 )
 
 type User struct {
@@ -49,9 +50,9 @@ func (s *Server) Execute(cmd string, args ...interface{}) (r *Result, err error)
 		}
 
 		r, err = s.conn.Execute(cmd, args...)
-		if err != nil && ErrorEqual(err, ErrBadConn) {
+		if err != nil && packet.IsConnError(err) {
 			return
-		} else if ErrorEqual(err, ErrBadConn) {
+		} else if packet.IsConnError(err) {
 			s.conn = nil
 			continue
 		} else {

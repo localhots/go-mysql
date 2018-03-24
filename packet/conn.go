@@ -3,6 +3,7 @@ package packet
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 
@@ -79,7 +80,10 @@ func (c *Conn) ReadPacketTo(w io.Writer) error {
 	header := []byte{0, 0, 0, 0}
 
 	if _, err := io.ReadFull(c.br, header); err != nil {
-		return ErrBadConn
+		return ConnError{
+			Cause:   errors.Trace(err),
+			Message: "Failed to read packet header",
+		}
 	}
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
@@ -96,16 +100,22 @@ func (c *Conn) ReadPacketTo(w io.Writer) error {
 	c.Sequence++
 
 	if n, err := io.CopyN(w, c.br, int64(length)); err != nil {
-		return ErrBadConn
+		return ConnError{
+			Cause:   errors.Trace(err),
+			Message: "Failed to read packet body",
+		}
 	} else if n != int64(length) {
-		return ErrBadConn
+		return ConnError{
+			Cause:   errors.Trace(err),
+			Message: fmt.Sprintf("Packet body length mismatch. Expected %d, got %d", length, n),
+		}
 	} else {
 		if length < MaxPayloadLen {
 			return nil
 		}
 
 		if err := c.ReadPacketTo(w); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -124,10 +134,15 @@ func (c *Conn) WritePacket(data []byte) error {
 
 		data[3] = c.Sequence
 
-		if n, err := c.Write(data[:4+MaxPayloadLen]); err != nil {
-			return ErrBadConn
-		} else if n != (4 + MaxPayloadLen) {
-			return ErrBadConn
+		bodyOffset := 4 + MaxPayloadLen
+		if n, err := c.Write(data[:bodyOffset]); err != nil {
+			return ConnError{
+				Cause:   errors.Trace(err),
+				Message: "Failed to write packet header",
+			}
+		} else if n != bodyOffset {
+			msg := fmt.Sprintf("Packet header not fully written. Size: %d, written %d", bodyOffset, n)
+			return errors.Trace(ConnError{Message: msg})
 		} else {
 			c.Sequence++
 			length -= MaxPayloadLen
@@ -141,9 +156,13 @@ func (c *Conn) WritePacket(data []byte) error {
 	data[3] = c.Sequence
 
 	if n, err := c.Write(data); err != nil {
-		return ErrBadConn
+		return ConnError{
+			Cause:   errors.Trace(err),
+			Message: "Failed to write packet body",
+		}
 	} else if n != len(data) {
-		return ErrBadConn
+		msg := fmt.Sprintf("Packet body not fully written. Size: %d, written %d", len(data), n)
+		return errors.Trace(ConnError{Message: msg})
 	} else {
 		c.Sequence++
 		return nil
@@ -160,4 +179,29 @@ func (c *Conn) Close() error {
 		return c.Conn.Close()
 	}
 	return nil
+}
+
+// ConnError contains connection error details.
+type ConnError struct {
+	Cause   error
+	Message string
+}
+
+// Error implements error interface.
+func (e ConnError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s. Cause: %s", e.Message, e.Cause.Error())
+	}
+
+	return e.Message
+}
+
+func IsConnError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	cause := errors.Cause(err)
+	_, ok := cause.(ConnError)
+	return ok
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/siddontang/go-mysql/client"
 	"github.com/siddontang/go-mysql/dump"
 	"github.com/siddontang/go-mysql/mysql"
+	"github.com/siddontang/go-mysql/packet"
 	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go-mysql/schema"
 	log "github.com/sirupsen/logrus"
@@ -145,7 +146,6 @@ func (c *Canal) prepareDumper() error {
 
 	charset := c.cfg.Charset
 	c.dumper.SetCharset(charset)
-
 	c.dumper.SetWhere(c.cfg.Dump.Where)
 	c.dumper.SkipMasterData(c.cfg.Dump.SkipMasterData)
 	c.dumper.SetMaxAllowedPacket(c.cfg.Dump.MaxAllowedPacketMB)
@@ -441,9 +441,9 @@ func (c *Canal) Execute(cmd string, args ...interface{}) (rr *mysql.Result, err 
 		}
 
 		rr, err = c.conn.Execute(cmd, args...)
-		if err != nil && !mysql.ErrorEqual(err, mysql.ErrBadConn) {
+		if err != nil && !packet.IsConnError(err) {
 			return
-		} else if mysql.ErrorEqual(err, mysql.ErrBadConn) {
+		} else if packet.IsConnError(err) {
 			c.conn.Close()
 			c.conn = nil
 			continue
