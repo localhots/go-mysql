@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	errSyncRunning = errors.New("Sync is running, must Close first")
+	errSyncRunning       = errors.New("Sync already started, call Close first")
+	ErrShutdownRequested = errors.New("Shutdown requested, closing sync")
 )
 
 // BinlogSyncerConfig is the configuration for BinlogSyncer.
@@ -720,6 +721,14 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		needStop = true
 	}
 
+	canStop := false
+	if _, ok := e.Event.(*XIDEvent); ok {
+		// AWS Aurora binary log often contains multiple rows events _in_a_row_
+		// Stopping in between rows events won't allow the syncer to continue
+		// after restart. It is safe to stop at XID events though.
+		canStop = true
+	}
+
 	if needACK {
 		err := b.replySemiSyncACK(b.nextPos)
 		if err != nil {
@@ -727,8 +736,8 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		}
 	}
 
-	if needStop {
-		return errors.New("sync is been closing...")
+	if needStop && canStop {
+		return ErrShutdownRequested
 	}
 
 	return nil
