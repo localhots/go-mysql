@@ -100,6 +100,10 @@ type BinlogSyncer struct {
 	lastConnectionID uint32
 
 	retryCount int
+
+	// Post shutdown feedback
+	sdReqTime        time.Time
+	eventsSinceSdReq uint64
 }
 
 // NewBinlogSyncer creates the BinlogSyncer with cfg.
@@ -681,6 +685,7 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		return errors.Trace(err)
 	}
 
+	canStop := false
 	if e.Header.LogPos > 0 {
 		// Some events like FormatDescriptionEvent return 0, ignore.
 		b.nextPos.Pos = e.Header.LogPos
@@ -710,6 +715,11 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		}
 	case *XIDEvent:
 		event.GSet = b.getGtidSet()
+
+		// AWS Aurora binary log often contains multiple rows events _in_a_row_
+		// Stopping in between rows events won't allow the syncer to continue
+		// after restart. It is safe to stop at XID events though.
+		canStop = true
 	case *QueryEvent:
 		event.GSet = b.getGtidSet()
 	}
@@ -718,15 +728,20 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 	select {
 	case s.ch <- e:
 	case <-b.ctx.Done():
+		if b.sdReqTime.IsZero() {
+			b.sdReqTime = time.Now()
+		}
 		needStop = true
 	}
 
-	canStop := false
-	if _, ok := e.Event.(*XIDEvent); ok {
-		// AWS Aurora binary log often contains multiple rows events _in_a_row_
-		// Stopping in between rows events won't allow the syncer to continue
-		// after restart. It is safe to stop at XID events though.
-		canStop = true
+	if needStop && !canStop {
+		b.eventsSinceSdReq++
+		if b.eventsSinceSdReq%10000 == 0 {
+			elapsed := time.Since(b.sdReqTime)
+			elapsed -= elapsed % time.Second
+			log.Warnf("BinlogSyncer is waiting for XID event before shutdown. Time elaped: %s, events processed: %d",
+				elapsed, b.eventsSinceSdReq)
+		}
 	}
 
 	if needACK {
