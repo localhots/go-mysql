@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	ErrNeedSyncAgain = errors.New("Last sync error or closed, try sync and get event again")
-	ErrSyncClosed    = errors.New("Sync was closed")
+	// ErrSyncClosed is returned when Syncer was already closed.
+	ErrSyncClosed = errors.New("Sync was closed")
 )
 
 // BinlogStreamer gets the streaming event.
@@ -19,11 +19,20 @@ type BinlogStreamer struct {
 	err error
 }
 
+func newBinlogStreamer() *BinlogStreamer {
+	s := new(BinlogStreamer)
+
+	s.ch = make(chan *BinlogEvent, 10240)
+	s.ech = make(chan error, 4)
+
+	return s
+}
+
 // GetEvent gets the binlog event one by one, it will block until Syncer receives any events from MySQL
 // or meets a sync error. You can pass a context (like Cancel or Timeout) to break the block.
 func (s *BinlogStreamer) GetEvent(ctx context.Context) (*BinlogEvent, error) {
 	if s.err != nil {
-		return nil, ErrNeedSyncAgain
+		return nil, ErrSyncClosed
 	}
 
 	select {
@@ -54,13 +63,4 @@ func (s *BinlogStreamer) closeWithError(err error) {
 	case s.ech <- err:
 	default:
 	}
-}
-
-func newBinlogStreamer() *BinlogStreamer {
-	s := new(BinlogStreamer)
-
-	s.ch = make(chan *BinlogEvent, 10240)
-	s.ech = make(chan error, 4)
-
-	return s
 }
