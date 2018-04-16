@@ -103,14 +103,6 @@ type BinlogSyncer struct {
 	lastConnectionID uint32
 
 	retryCount int
-
-	// Shutdown handling
-	shutdownRequested bool
-	shutdown          chan struct{}
-
-	// Post shutdown feedback
-	sdReqTime        time.Time
-	eventsSinceSdReq uint64
 }
 
 // NewBinlogSyncer creates the BinlogSyncer with cfg.
@@ -130,7 +122,6 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
 	b.parser.SetUseDecimal(b.cfg.UseDecimal)
 	b.useGTID = false
 	b.running = false
-	b.shutdown = make(chan struct{})
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 
 	return b
@@ -150,9 +141,6 @@ func (b *BinlogSyncer) close() {
 	}
 
 	log.Info("Binlog Syncer is preparing for shutdown")
-
-	b.shutdownRequested = true
-	<-b.shutdown
 
 	b.running = false
 	b.cancel()
@@ -695,7 +683,6 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		return errors.Trace(err)
 	}
 
-	canStop := false
 	if e.Header.LogPos > 0 {
 		// Some events like FormatDescriptionEvent return 0, ignore.
 		b.nextPos.Pos = e.Header.LogPos
@@ -725,43 +712,21 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		}
 	case *XIDEvent:
 		event.GSet = b.getGtidSet()
-
-		// AWS Aurora binary log often contains multiple rows events _in_a_row_
-		// Stopping in between rows events won't allow the syncer to continue
-		// after restart. It is safe to stop at XID events though.
-		canStop = true
 	case *QueryEvent:
 		event.GSet = b.getGtidSet()
 	}
 
-	needStop := b.shutdownRequested
-	if needStop && b.sdReqTime.IsZero() {
-		b.sdReqTime = time.Now()
+	select {
+	case <-b.ctx.Done():
+		return ErrShutdownRequested
+	case s.ch <- e:
 	}
-
-	if needStop && !canStop {
-		b.eventsSinceSdReq++
-		if b.eventsSinceSdReq%1000 == 0 {
-			elapsed := time.Since(b.sdReqTime)
-			elapsed -= elapsed % time.Second
-			log.Warnf("BinlogSyncer is waiting for XID event before shutdown. Time elaped: %s, events processed: %d",
-				elapsed, b.eventsSinceSdReq)
-		}
-	}
-
-	s.ch <- e
 
 	if needACK {
 		err := b.replySemiSyncACK(b.nextPos)
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-
-	if needStop && canStop {
-		log.Info("Binlog Syncer can now shutdown")
-		close(b.shutdown)
-		return ErrShutdownRequested
 	}
 
 	return nil
