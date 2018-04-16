@@ -371,13 +371,14 @@ func (b *BinlogSyncer) StartSyncGTID(gset GTIDSet) (*BinlogStreamer, error) {
 	}
 
 	var err error
-	if b.cfg.Flavor != MariaDBFlavor {
-		// default use MySQL
+	switch b.cfg.Flavor {
+	case MySQLFlavor:
 		err = b.writeBinlogDumpMysqlGTIDCommand(gset)
-	} else {
+	case MariaDBFlavor:
 		err = b.writeBinlogDumpMariadbGTIDCommand(gset)
+	default:
+		panic(errors.NewErr("Unsupported DB flavor: %q", b.cfg.Flavor))
 	}
-
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +555,6 @@ func (b *BinlogSyncer) retrySync() error {
 		if err := b.prepareSyncGTID(b.gset); err != nil {
 			return errors.Trace(err)
 		}
-
 	} else {
 		log.Infof("begin to re-sync from %s", b.nextPos)
 		if err := b.prepareSyncPos(b.nextPos); err != nil {
@@ -613,8 +613,6 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 	for {
 		data, err := b.c.ReadPacket()
 		if err != nil {
-			log.Error(err)
-
 			// we meet connection error, should re-connect again with
 			// last nextPos or nextGTID we got.
 			if len(b.nextPos.Name) == 0 && b.gset == nil {
