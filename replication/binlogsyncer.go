@@ -101,6 +101,10 @@ type BinlogSyncer struct {
 
 	retryCount int
 
+	// Shutdown handling
+	shutdownRequested bool
+	shutdown          chan struct{}
+
 	// Post shutdown feedback
 	sdReqTime        time.Time
 	eventsSinceSdReq uint64
@@ -123,6 +127,7 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
 	b.parser.SetUseDecimal(b.cfg.UseDecimal)
 	b.useGTID = false
 	b.running = false
+	b.shutdown = make(chan struct{})
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 
 	return b
@@ -141,7 +146,10 @@ func (b *BinlogSyncer) close() {
 		return
 	}
 
-	log.Info("syncer is closing...")
+	log.Info("Binlog Syncer is preparing for shutdown")
+
+	b.shutdownRequested = true
+	<-b.shutdown
 
 	b.running = false
 	b.cancel()
@@ -724,14 +732,9 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		event.GSet = b.getGtidSet()
 	}
 
-	needStop := false
-	select {
-	case s.ch <- e:
-	case <-b.ctx.Done():
-		if b.sdReqTime.IsZero() {
-			b.sdReqTime = time.Now()
-		}
-		needStop = true
+	needStop := b.shutdownRequested
+	if needStop && b.sdReqTime.IsZero() {
+		b.sdReqTime = time.Now()
 	}
 
 	if needStop && !canStop {
@@ -744,6 +747,8 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		}
 	}
 
+	s.ch <- e
+
 	if needACK {
 		err := b.replySemiSyncACK(b.nextPos)
 		if err != nil {
@@ -752,6 +757,8 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 	}
 
 	if needStop && canStop {
+		log.Info("Binlog Syncer can now shutdown")
+		close(b.shutdown)
 		return ErrShutdownRequested
 	}
 
