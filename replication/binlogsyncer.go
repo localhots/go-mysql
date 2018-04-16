@@ -18,7 +18,10 @@ import (
 )
 
 var (
-	errSyncRunning       = errors.New("Sync already started, call Close first")
+	// errSyncRunning is returned when attempted to start Streamer for an
+	// already running Syncer.
+	errSyncRunning = errors.New("Sync already started, call Close first")
+	// ErrShutdownRequested is returned when shutdown is requested and possible.
 	ErrShutdownRequested = errors.New("Shutdown requested, closing sync")
 )
 
@@ -223,28 +226,28 @@ func (b *BinlogSyncer) registerSlave() error {
 
 	//for mysql 5.6+, binlog has a crc32 checksum
 	//before mysql 5.6, this will not work, don't matter.:-)
-	if r, err := b.c.Execute("SHOW GLOBAL VARIABLES LIKE 'BINLOG_CHECKSUM'"); err != nil {
+	r, err := b.c.Execute("SHOW GLOBAL VARIABLES LIKE 'BINLOG_CHECKSUM'")
+	if err != nil {
 		return errors.Trace(err)
-	} else {
-		s, _ := r.GetString(0, 1)
-		if s != "" {
-			// maybe CRC32 or NONE
+	}
 
-			// mysqlbinlog.cc use NONE, see its below comments:
-			// Make a notice to the server that this client
-			// is checksum-aware. It does not need the first fake Rotate
-			// necessary checksummed.
-			// That preference is specified below.
+	s, _ := r.GetString(0, 1)
+	if s != "" {
+		// maybe CRC32 or NONE
 
-			if _, err = b.c.Execute(`SET @master_binlog_checksum='NONE'`); err != nil {
-				return errors.Trace(err)
-			}
+		// mysqlbinlog.cc use NONE, see its below comments:
+		// Make a notice to the server that this client
+		// is checksum-aware. It does not need the first fake Rotate
+		// necessary checksummed.
+		// That preference is specified below.
 
-			// if _, err = b.c.Execute(`SET @master_binlog_checksum=@@global.binlog_checksum`); err != nil {
-			// 	return errors.Trace(err)
-			// }
-
+		if _, err = b.c.Execute(`SET @master_binlog_checksum='NONE'`); err != nil {
+			return errors.Trace(err)
 		}
+
+		// if _, err = b.c.Execute(`SET @master_binlog_checksum=@@global.binlog_checksum`); err != nil {
+		// 	return errors.Trace(err)
+		// }
 	}
 
 	if b.cfg.Flavor == MariaDBFlavor {
@@ -280,18 +283,19 @@ func (b *BinlogSyncer) enableSemiSync() error {
 		return nil
 	}
 
-	if r, err := b.c.Execute("SHOW VARIABLES LIKE 'rpl_semi_sync_master_enabled';"); err != nil {
+	r, err := b.c.Execute("SHOW VARIABLES LIKE 'rpl_semi_sync_master_enabled';")
+	if err != nil {
 		return errors.Trace(err)
-	} else {
-		s, _ := r.GetString(0, 1)
-		if s != "ON" {
-			log.Errorf("master does not support semi synchronous replication, use no semi-sync")
-			b.cfg.SemiSyncEnabled = false
-			return nil
-		}
 	}
 
-	_, err := b.c.Execute(`SET @rpl_semi_sync_slave = 1;`)
+	s, _ := r.GetString(0, 1)
+	if s != "ON" {
+		log.Errorf("master does not support semi synchronous replication, use no semi-sync")
+		b.cfg.SemiSyncEnabled = false
+		return nil
+	}
+
+	_, err = b.c.Execute(`SET @rpl_semi_sync_slave = 1;`)
 	if err != nil {
 		return errors.Trace(err)
 	}
