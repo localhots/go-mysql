@@ -44,7 +44,12 @@ func (s *BinlogStreamer) closeWithError(err error) {
 	if err == nil {
 		err = ErrSyncClosed
 	}
-	log.Errorf("close sync with err: %v", err)
+	switch err {
+	case ErrSyncClosed, ErrShutdownRequested:
+	default:
+		log.Errorf("close sync with err: %v", err)
+	}
+
 	select {
 	case s.ech <- err:
 	default:
