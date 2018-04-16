@@ -739,7 +739,7 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 
 	if needStop && !canStop {
 		b.eventsSinceSdReq++
-		if b.eventsSinceSdReq%10000 == 0 {
+		if b.eventsSinceSdReq%1000 == 0 {
 			elapsed := time.Since(b.sdReqTime)
 			elapsed -= elapsed % time.Second
 			log.Warnf("BinlogSyncer is waiting for XID event before shutdown. Time elaped: %s, events processed: %d",
