@@ -107,14 +107,9 @@ type BinlogSyncer struct {
 
 // NewBinlogSyncer creates the BinlogSyncer with cfg.
 func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
-	// Clear the Password to avoid outputing it in log.
-	pass := cfg.Password
-	cfg.Password = ""
-	log.Infof("create BinlogSyncer with config %v", cfg)
-	cfg.Password = pass
+	log.Infof("Creating new Binlog Syncer for %s", cfg.Host)
 
 	b := new(BinlogSyncer)
-
 	b.cfg = cfg
 	b.parser = NewBinlogParser()
 	b.parser.SetRawMode(b.cfg.RawModeEnabled)
@@ -155,7 +150,7 @@ func (b *BinlogSyncer) close() {
 		b.c.Close()
 	}
 
-	log.Info("syncer is closed")
+	log.Info("Binlog Syncer is closed")
 }
 
 func (b *BinlogSyncer) isClosed() bool {
@@ -172,7 +167,7 @@ func (b *BinlogSyncer) registerSlave() error {
 		b.c.Close()
 	}
 
-	log.Infof("register slave for master server %s:%d", b.cfg.Host, b.cfg.Port)
+	log.Infof("Binlog Syncer is registering as slave for master server %s:%d", b.cfg.Host, b.cfg.Port)
 	var err error
 	b.c, err = client.Connect(fmt.Sprintf("%s:%d", b.cfg.Host, b.cfg.Port), b.cfg.User, b.cfg.Password, "", func(c *client.Conn) {
 		c.TLSConfig = b.cfg.TLSConfig
@@ -324,7 +319,7 @@ func (b *BinlogSyncer) GetNextPosition() Position {
 
 // StartSync starts syncing from the `pos` position.
 func (b *BinlogSyncer) StartSync(pos Position) (*BinlogStreamer, error) {
-	log.Infof("begin to sync binlog from position %s", pos)
+	log.Infof("Binlog Syncer will start reading %s at %d", pos.Name, pos.Pos)
 
 	b.m.Lock()
 	defer b.m.Unlock()
@@ -691,7 +686,7 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 	case *RotateEvent:
 		b.nextPos.Name = string(event.NextLogName)
 		b.nextPos.Pos = uint32(event.Position)
-		log.Infof("rotate to %s", b.nextPos)
+		log.Infof("Binlog Syncer is rotating to %s at %d", event.NextLogName, event.Position)
 	case *GTIDEvent:
 		if !b.useGTID {
 			break
